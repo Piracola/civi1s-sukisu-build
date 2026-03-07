@@ -20,14 +20,12 @@ jobs:
           sudo apt-get update
           sudo apt install -y curl llvm lld wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils libelf-dev
 
-      - name: 下载 Android NDK 工具链
+      - name: 下载 LineageOS 工具链
         run: |
           mkdir -p toolchains
           cd toolchains
-          # 下载 Android NDK r25c
-          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
-          unzip -q android-ndk-r25c-linux.zip
-          rm android-ndk-r25c-linux.zip
+          # 下载 LineageOS 的 clang
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b clang-aosp
 
       - name: 拉取内核源码
         run: |
@@ -58,10 +56,16 @@ jobs:
         run: |
           cd kernel_src
           
-          NDK_PATH=$GITHUB_WORKSPACE/toolchains/android-ndk-r25c
-          export PATH=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+          CLANG_PATH=$GITHUB_WORKSPACE/toolchains/clang-aosp
+          export PATH=$CLANG_PATH/bin:$PATH
           export KBUILD_BUILD_HOST=Github-Action
           export KBUILD_BUILD_USER=Piracola
+          
+          # 验证工具链
+          echo "Clang version:"
+          clang --version
+          echo "LD path:"
+          which ld.lld
           
           make -j$(nproc --all) \
             O=out \
@@ -70,7 +74,7 @@ jobs:
             LD=ld.lld \
             LLVM=1 \
             LLVM_IAS=1 \
-            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
             gki_defconfig
           
           make -j$(nproc --all) \
@@ -80,7 +84,7 @@ jobs:
             LD=ld.lld \
             LLVM=1 \
             LLVM_IAS=1 \
-            CROSS_COMPILE=aarch64-linux-android-
+            CROSS_COMPILE=aarch64-linux-gnu-
 
       - name: 准备 AnyKernel3 打包
         run: |
