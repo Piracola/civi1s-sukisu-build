@@ -12,27 +12,20 @@ jobs:
       - name: 安装构建依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm curl wget git
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm curl wget git unzip
 
       - name: 拉取内核源码
         run: |
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource -b zijin-s-oss kernel_src
 
-      - name: 下载 Clang 工具链
+      - name: 下载 Android NDK 工具链
         run: |
-          mkdir -p toolchains/clang
-          cd toolchains/clang
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2022/clang-r416183b1.tar.gz
-          tar -xf clang-r416183b1.tar.gz
-          rm clang-r416183b1.tar.gz
-
-      - name: 下载 GCC 交叉编译工具链
-        run: |
-          mkdir -p toolchains/gcc-64 toolchains/gcc-32
-          cd toolchains/gcc-64
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b pie-dev .
-          cd ../gcc-32
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 -b pie-dev .
+          mkdir -p toolchains
+          cd toolchains
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          rm android-ndk-r25c-linux.zip
+          mv android-ndk-r25c ndk
 
       - name: 集成 SukiSU-Ultra & SUSFS
         run: |
@@ -58,13 +51,13 @@ jobs:
       - name: 开始编译
         run: |
           cd kernel_src
-          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc-64/bin:$GITHUB_WORKSPACE/toolchains/gcc-32/bin:$PATH
+          export PATH=$GITHUB_WORKSPACE/toolchains/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
           
           make -j$(nproc) \
             O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-android24- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             gki_defconfig
@@ -73,7 +66,7 @@ jobs:
             O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-android24- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi-
 
