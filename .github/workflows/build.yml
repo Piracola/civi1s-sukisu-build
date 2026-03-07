@@ -29,9 +29,6 @@ jobs:
           unzip -q master.zip
           mv proton-clang-master clang-aosp
           rm master.zip
-          
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 aarch64-4.9
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 armhf-4.9
 
       - name: 拉取内核源码
         run: |
@@ -61,7 +58,7 @@ jobs:
       - name: 开始编译
         run: |
           cd kernel_src
-          export PATH=$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$GITHUB_WORKSPACE/toolchains/aarch64-4.9/bin:$GITHUB_WORKSPACE/toolchains/armhf-4.9/bin:$PATH
+          export PATH=$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH
           export KBUILD_BUILD_HOST=Github-Action
           export KBUILD_BUILD_USER=Piracola
           
@@ -70,8 +67,8 @@ jobs:
             ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             gki_defconfig
           
           make -j$(nproc --all) \
@@ -79,8 +76,8 @@ jobs:
             ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi-
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
       - name: 准备 AnyKernel3 打包
         run: |
