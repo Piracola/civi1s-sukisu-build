@@ -1,0 +1,93 @@
+name: Build SukiSU Kernel for Civi 1s
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang lld llvm curl wget git
+
+      - name: 拉取内核源码
+        run: |
+          git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource -b zijin-s-oss kernel_src
+
+      - name: 下载 Clang 工具链
+        run: |
+          mkdir -p toolchains/clang
+          cd toolchains/clang
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2022/clang-r416183b1.tar.gz
+          tar -xf clang-r416183b1.tar.gz
+          rm clang-r416183b1.tar.gz
+
+      - name: 下载 GCC 交叉编译工具链
+        run: |
+          mkdir -p toolchains/gcc-64 toolchains/gcc-32
+          cd toolchains/gcc-64
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b pie-dev .
+          cd ../gcc-32
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 -b pie-dev .
+
+      - name: 集成 SukiSU-Ultra & SUSFS
+        run: |
+          cd kernel_src
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-v1.5.5
+
+      - name: 修改内核配置 (Enable KSU/SUSFS)
+        run: |
+          cd kernel_src
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          cat >> $DEFCONFIG << EOF
+          CONFIG_KSU=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_OVERLAY_FS=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_KSU_VERSION_H=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          EOF
+
+      - name: 开始编译
+        run: |
+          cd kernel_src
+          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc-64/bin:$GITHUB_WORKSPACE/toolchains/gcc-32/bin:$PATH
+          
+          make -j$(nproc) \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            gki_defconfig
+          
+          make -j$(nproc) \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi-
+
+      - name: 准备 AnyKernel3 打包
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3
+          rm -rf AnyKernel3/.git
+          cp kernel_src/out/arch/arm64/boot/Image AnyKernel3/
+          sed -i 's/device.name1=.*/device.name1=zijin/g' AnyKernel3/anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=civi1s/g' AnyKernel3/anykernel.sh
+          sed -i 's/device.name3=.*/device.name3=civi_1s/g' AnyKernel3/anykernel.sh
+
+      - name: 上传构建结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: SukiSU-Kernel-Zijin
+          path: AnyKernel3/*
