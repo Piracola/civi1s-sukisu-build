@@ -24,13 +24,9 @@ jobs:
         run: |
           mkdir -p toolchains
           cd toolchains
-          wget -O clang.tar.gz https://kali.download/nethunter-images/toolchains/clang-r416183b1.tar.gz
-          tar -xf clang.tar.gz
-          mv clang-r416183b1 clang-aosp
-          wget https://kali.download/nethunter-images/toolchains/google_aarch64-4.9.tar.xz
-          wget https://kali.download/nethunter-images/toolchains/google_armhf-4.9.tar.xz
-          tar -xf google_aarch64-4.9.tar.xz
-          tar -xf google_armhf-4.9.tar.xz
+          git clone --depth=1 https://gitlab.com/LeCmnGang/clang-toolchain.git clang-aosp
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 aarch64-4.9
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 armhf-4.9
 
       - name: 拉取内核源码
         run: |
