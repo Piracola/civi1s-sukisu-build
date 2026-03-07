@@ -18,7 +18,7 @@ jobs:
       - name: 安装构建依赖和工具链
         run: |
           sudo apt-get update
-          sudo apt install -y curl llvm-14 lld-14 clang-14 wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils libelf-dev gcc-aarch64-linux-gnu
+          sudo apt install -y curl wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils libelf-dev gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: 拉取内核源码
         run: |
@@ -49,33 +49,23 @@ jobs:
         run: |
           cd kernel_src
           
-          export PATH=/usr/lib/llvm-14/bin:$PATH
           export KBUILD_BUILD_HOST=Github-Action
           export KBUILD_BUILD_USER=Piracola
           
           # 验证工具链
-          echo "Clang version:"
-          clang-14 --version
           echo "GCC version:"
           aarch64-linux-gnu-gcc --version
           
+          # 使用GCC编译
           make -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
-            CC=clang-14 \
-            LD=ld.lld \
-            LLVM=1 \
-            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             gki_defconfig
           
           make -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
-            CC=clang-14 \
-            LD=ld.lld \
-            LLVM=1 \
-            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu-
 
       - name: 准备 AnyKernel3 打包
