@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -15,17 +15,10 @@ jobs:
         with:
           swap-size-gb: 10
 
-      - name: 安装构建依赖
+      - name: 安装构建依赖和工具链
         run: |
           sudo apt-get update
-          sudo apt install -y curl llvm lld wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils libelf-dev
-
-      - name: 下载 LineageOS 工具链
-        run: |
-          mkdir -p toolchains
-          cd toolchains
-          # 下载 LineageOS 的 clang
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b clang-aosp
+          sudo apt install -y curl llvm-14 lld-14 clang-14 wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils libelf-dev gcc-aarch64-linux-gnu
 
       - name: 拉取内核源码
         run: |
@@ -56,21 +49,20 @@ jobs:
         run: |
           cd kernel_src
           
-          CLANG_PATH=$GITHUB_WORKSPACE/toolchains/clang-aosp
-          export PATH=$CLANG_PATH/bin:$PATH
+          export PATH=/usr/lib/llvm-14/bin:$PATH
           export KBUILD_BUILD_HOST=Github-Action
           export KBUILD_BUILD_USER=Piracola
           
           # 验证工具链
           echo "Clang version:"
-          clang --version
-          echo "LD path:"
-          which ld.lld
+          clang-14 --version
+          echo "GCC version:"
+          aarch64-linux-gnu-gcc --version
           
           make -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
-            CC=clang \
+            CC=clang-14 \
             LD=ld.lld \
             LLVM=1 \
             LLVM_IAS=1 \
@@ -80,7 +72,7 @@ jobs:
           make -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
-            CC=clang \
+            CC=clang-14 \
             LD=ld.lld \
             LLVM=1 \
             LLVM_IAS=1 \
