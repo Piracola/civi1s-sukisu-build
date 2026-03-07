@@ -67,7 +67,9 @@ jobs:
             O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
+            LD=ld.lld \
+            LLVM=1 \
+            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             gki_defconfig
           
@@ -75,7 +77,9 @@ jobs:
             O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
+            LD=ld.lld \
+            LLVM=1 \
+            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu-
 
       - name: 准备 AnyKernel3 打包
