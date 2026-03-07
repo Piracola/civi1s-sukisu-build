@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -15,10 +15,16 @@ jobs:
         with:
           swap-size-gb: 10
 
-      - name: 安装构建依赖和工具链
+      - name: 安装构建依赖
         run: |
           sudo apt-get update
-          sudo apt install -y curl wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils libelf-dev gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
+
+      - name: 下载 Google Clang 工具链
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchains
+          cd $GITHUB_WORKSPACE/toolchains
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b clang
 
       - name: 拉取内核源码
         run: |
@@ -49,24 +55,24 @@ jobs:
         run: |
           cd kernel_src
           
+          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH
           export KBUILD_BUILD_HOST=Github-Action
           export KBUILD_BUILD_USER=Piracola
           
-          # 验证工具链
-          echo "GCC version:"
-          aarch64-linux-gnu-gcc --version
-          
-          # 使用GCC编译
           make -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
             gki_defconfig
           
           make -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu-
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android-
 
       - name: 准备 AnyKernel3 打包
         run: |
