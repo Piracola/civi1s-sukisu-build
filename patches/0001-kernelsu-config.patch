@@ -1,0 +1,14 @@
+diff --git a/arch/arm64/configs/gki_defconfig b/arch/arm64/configs/gki_defconfig
+index original..patched 100644
+--- a/arch/arm64/configs/gki_defconfig
++++ b/arch/arm64/configs/gki_defconfig
+@@ -585,3 +585,12 @@ CONFIG_BUG_ON_DATA_CORRUPTION=y
+ CONFIG_CORESIGHT=y
+ CONFIG_CORESIGHT_STM=y
++CONFIG_KSU=y
++CONFIG_KPROBE_EVENTS=y
++CONFIG_KSU_SUSFS=y
++CONFIG_KSU_SUSFS_HAS_KSU_VERSION_H=y
++CONFIG_KSU_SUSFS_SUS_PATH=y
++CONFIG_KSU_SUSFS_SUS_MOUNT=y
++CONFIG_KSU_SUSFS_SUS_KSTAT=y
