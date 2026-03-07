@@ -18,15 +18,14 @@ jobs:
       - name: 安装构建依赖
         run: |
           sudo apt-get update
-          sudo apt install -y curl llvm lld wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils
+          sudo apt install -y curl llvm lld clang wget git ccache automake flex lzop bison gperf build-essential zip zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush dpkg-dev liblz4-tool make optipng libssl-dev pwgen bc xsltproc unzip device-tree-compiler kmod python3 xz-utils
 
-      - name: 下载工具链
+      - name: 下载交叉编译工具链
         run: |
           mkdir -p toolchains
           cd toolchains
-          git clone --depth=1 https://gitlab.com/LeCmnGang/clang-toolchain.git clang-aosp
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 aarch64-4.9
-          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 armhf-4.9
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 aarch64-4.9
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 armhf-4.9
 
       - name: 拉取内核源码
         run: |
@@ -56,7 +55,7 @@ jobs:
       - name: 开始编译
         run: |
           cd kernel_src
-          export PATH=$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$GITHUB_WORKSPACE/toolchains/aarch64-4.9/bin:$GITHUB_WORKSPACE/toolchains/armhf-4.9/bin:$PATH
+          export PATH=$GITHUB_WORKSPACE/toolchains/aarch64-4.9/bin:$GITHUB_WORKSPACE/toolchains/armhf-4.9/bin:$PATH
           export KBUILD_BUILD_HOST=Github-Action
           export KBUILD_BUILD_USER=Piracola
           
@@ -64,7 +63,8 @@ jobs:
             O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
+            LLVM=1 \
+            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             gki_defconfig
@@ -73,7 +73,8 @@ jobs:
             O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
+            LLVM=1 \
+            LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi-
 
