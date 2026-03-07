@@ -1,0 +1,27 @@
+# Build outputs
+Xiaomi_Kernel_OpenSource-zijin-s-oss/
+toolchains/
+AnyKernel3/
+out/
+*.zip
+*.img
+Image
+Image.gz
+
+# Temporary files
+*.o
+*.ko
+*.mod.c
+*.mod.o
+.tmp_versions/
+.*.cmd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
