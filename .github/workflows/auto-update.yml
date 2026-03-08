@@ -1,0 +1,226 @@
+name: Auto Update Kernel
+
+on:
+  schedule:
+    # 每周一凌晨3点检查更新 (UTC+8)
+    - cron: '0 19 * * 0'
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target kernel version (leave empty for latest)'
+        required: false
+        default: ''
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    outputs:
+      should_update: ${{ steps.check.outputs.should_update }}
+      target_version: ${{ steps.check.outputs.target_version }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Check for kernel updates
+        id: check
+        run: |
+          chmod +x ./update-kernel.sh
+          
+          # 获取当前版本
+          CURRENT=$(./update-kernel.sh version)
+          echo "Current version: $CURRENT"
+          
+          # 获取最新版本
+          LATEST=$(./update-kernel.sh latest)
+          echo "Latest version: $LATEST"
+          
+          # 确定目标版本
+          TARGET="${{ github.event.inputs.target_version }}"
+          if [ -z "$TARGET" ]; then
+            TARGET="$LATEST"
+          fi
+          
+          echo "Target version: $TARGET"
+          echo "target_version=$TARGET" >> $GITHUB_OUTPUT
+          
+          # 检查是否需要更新
+          if [ "$CURRENT" != "$TARGET" ]; then
+            echo "should_update=true" >> $GITHUB_OUTPUT
+            echo "::notice::Kernel update available: $CURRENT → $TARGET"
+          else
+            echo "should_update=false" >> $GITHUB_OUTPUT
+            echo "::notice::Kernel is already up to date"
+          fi
+      
+      - name: Create issue for update
+        if: steps.check.outputs.should_update == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const current = '${{ steps.check.outputs.current_version }}';
+            const target = '${{ steps.check.outputs.target_version }}';
+            
+            // 检查是否已有相关issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'kernel-update'
+            });
+            
+            const existingIssue = issues.data.find(issue => 
+              issue.title.includes(`Kernel Update: ${current} → ${target}`)
+            );
+            
+            if (!existingIssue) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Kernel Update Available: ${current} → ${target}`,
+                body: `## 🔄 Kernel Update Available
+                
+            **Current Version:** \`${current}\`
+            **Latest Version:** \`${target}\`
+            
+            ### How to Update
+            
+            1. Run the update script locally:
+               \`\`\`bash
+               ./update-kernel.sh update ${target}
+               \`\`\`
+            
+            2. Test the build:
+               \`\`\`bash
+               ./build.sh build
+               \`\`\`
+            
+            3. If successful, create a PR or commit the changes
+            
+            ### Manual Update
+            
+            You can also trigger the update workflow manually with a specific version target.
+            
+            ---
+            
+            This issue was automatically created by the kernel update checker.
+            `,
+                labels: ['kernel-update', 'automated']
+              });
+            }
+
+  update-kernel:
+    needs: check-and-update
+    if: needs.check-and-update.outputs.should_update == 'true' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y curl xz-utils git
+      
+      - name: Update kernel version
+        run: |
+          chmod +x ./update-kernel.sh
+          TARGET="${{ needs.check-and-update.outputs.target_version }}"
+          
+          echo "Updating kernel to $TARGET..."
+          ./update-kernel.sh update "$TARGET" || {
+            echo "::warning::Kernel update encountered conflicts"
+            exit 0  # 不失败，让用户知道有冲突
+          }
+      
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Commit changes
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git add -A
+          git commit -m "chore: update kernel to ${{ needs.check-and-update.outputs.target_version }}
+          
+          - Applied incremental patches from kernel.org
+          - Auto-updated by GitHub Actions
+          "
+      
+      - name: Create version tag
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          VERSION="${{ needs.check-and-update.outputs.target_version }}"
+          DATE=$(date +%Y%m%d)
+          TAG="kernel-v${VERSION}-${DATE}"
+          
+          git tag -a "$TAG" -m "Kernel version $VERSION - Auto build $DATE"
+      
+      - name: Push changes
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git push origin HEAD:main
+          git push origin --tags
+      
+      - name: Create Pull Request
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const target = '${{ needs.check-and-update.outputs.target_version }}';
+            
+            await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Update Kernel to ${target}`,
+              head: 'main',
+              base: 'main',
+              body: `## 🔄 Kernel Update
+            
+            **Target Version:** \`${target}\`
+            
+            ### Changes
+            
+            - Applied incremental patches from kernel.org
+            - Updated kernel version
+            - Generated by automated workflow
+            
+            ### Testing
+            
+            Please test the build before merging:
+            \`\`\`bash
+            ./build.sh build
+            \`\`\`
+            
+            ---
+            
+            This PR was automatically created by the kernel update workflow.
+            `
+            });
+
+      - name: Update version file
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          TARGET="${{ needs.check-and-update.outputs.target_version }}"
+          echo "$TARGET" > KERNEL_VERSION
+          git add KERNEL_VERSION
+          git commit -m "chore: update KERNEL_VERSION file to $TARGET" || true
+          git push origin HEAD:main

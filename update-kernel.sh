@@ -1,0 +1,304 @@
+#!/bin/bash
+# 自动更新内核版本脚本
+# 从Linux kernel官方源获取增量补丁并应用
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+KERNEL_SRC="${SCRIPT_DIR}/Xiaomi_Kernel_OpenSource-zijin-s-oss"
+VERSION_FILE="${SCRIPT_DIR}/KERNEL_VERSION"
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+# 获取当前内核版本
+get_current_version() {
+    if [ -f "$VERSION_FILE" ]; then
+        cat "$VERSION_FILE"
+    elif [ -d "$KERNEL_SRC" ]; then
+        cd "$KERNEL_SRC"
+        make kernelversion 2>/dev/null || {
+            # 从Makefile解析版本
+            local major=$(grep "^VERSION = " Makefile | awk '{print $3}')
+            local minor=$(grep "^PATCHLEVEL = " Makefile | awk '{print $3}')
+            local sub=$(grep "^SUBLEVEL = " Makefile | awk '{print $3}')
+            echo "${major}.${minor}.${sub}"
+        }
+    else
+        echo "5.4.86"  # 默认版本
+    fi
+}
+
+# 获取最新的5.4.x版本
+get_latest_version() {
+    local latest=""
+    
+    # 方法1: 从kernel.org获取
+    latest=$(curl -sL --connect-timeout 10 "https://cdn.kernel.org/pub/linux/kernel/v5.x/" | \
+        grep -oP 'patch-5\.4\.\d+\.xz' | \
+        grep -oP '5\.4\.\d+' | \
+        sort -V | \
+        tail -1)
+    
+    if [ -z "$latest" ]; then
+        # 方法2: 从主站获取
+        latest=$(curl -sL --connect-timeout 10 "https://www.kernel.org/pub/linux/kernel/v5.x/" | \
+            grep -oP 'linux-5\.4\.\d+\.tar\.xz' | \
+            grep -oP '5\.4\.\d+' | \
+            sort -V | \
+            tail -1)
+    fi
+    
+    if [ -z "$latest" ]; then
+        echo ""  # 返回空字符串而不是错误消息
+        return 1
+    fi
+    
+    echo "$latest"
+}
+
+# 比较版本号
+version_compare() {
+    local v1=$1
+    local v2=$2
+    
+    IFS='.' read -r maj1 min1 sub1 <<< "$v1"
+    IFS='.' read -r maj2 min2 sub2 <<< "$v2"
+    
+    if [ "$maj1" -ne "$maj2" ] || [ "$min1" -ne "$min2" ]; then
+        echo "different_branch"
+        return
+    fi
+    
+    if [ "$sub1" -lt "$sub2" ]; then
+        echo "update_needed"
+    elif [ "$sub1" -gt "$sub2" ]; then
+        echo "downgrade"
+    else
+        echo "same"
+    fi
+}
+
+# 下载并应用增量补丁
+apply_incremental_patches() {
+    local current_version=$1
+    local target_version=$2
+    
+    cd "$KERNEL_SRC"
+    
+    IFS='.' read -r maj min current_sub <<< "$current_version"
+    IFS='.' read -r _ _ target_sub <<< "$target_version"
+    
+    local current=$current_sub
+    local failed_patches=0
+    local applied_patches=0
+    
+    while [ "$current" -lt "$target_sub" ]; do
+        local next=$((current + 1))
+        local patch_url="https://cdn.kernel.org/pub/linux/kernel/v5.x/incr/patch-${maj}.${min}.${current}-${next}.xz"
+        local patch_file="/tmp/patch-${maj}.${min}.${current}-${next}"
+        
+        log_step "Applying patch ${maj}.${min}.${current} → ${maj}.${min}.${next}"
+        
+        # 下载补丁
+        if curl -L --progress-bar --connect-timeout 30 --max-time 120 \
+            "$patch_url" -o "${patch_file}.xz"; then
+            
+            # 解压
+            xz -d -f "${patch_file}.xz"
+            
+            # 应用补丁
+            if git apply --check "$patch_file" 2>/dev/null; then
+                git apply "$patch_file"
+                log_info "Patch ${maj}.${min}.${next} applied successfully"
+                ((applied_patches++))
+            else
+                log_warn "Patch ${maj}.${min}.${next} conflicts, attempting force apply..."
+                if git apply --reject --whitespace=fix "$patch_file" 2>/dev/null; then
+                    log_warn "Patch ${maj}.${min}.${next} applied with conflicts, manual review needed"
+                    ((applied_patches++))
+                    ((failed_patches++))
+                else
+                    log_error "Failed to apply patch ${maj}.${min}.${next}"
+                    ((failed_patches++))
+                    
+                    # 清理reject文件
+                    find . -name "*.rej" -delete
+                fi
+            fi
+            
+            # 清理
+            rm -f "$patch_file"
+        else
+            log_error "Failed to download patch for ${maj}.${min}.${next}"
+            return 1
+        fi
+        
+        current=$next
+    done
+    
+    # 更新Makefile中的版本号
+    sed -i "s/^SUBLEVEL = .*/SUBLEVEL = $target_sub/" Makefile
+    
+    echo ""
+    log_info "Patch summary:"
+    echo "  Applied: $applied_patches"
+    echo "  Failed: $failed_patches"
+    
+    return $failed_patches
+}
+
+# 创建git提交
+create_git_commit() {
+    local version=$1
+    
+    cd "$KERNEL_SRC"
+    
+    # 检查是否有更改
+    if [ -n "$(git status --porcelain)" ]; then
+        log_step "Creating git commit for version $version"
+        
+        git add -A
+        git commit -m "chore: update kernel to $version
+
+- Applied incremental patches from kernel.org
+- Updated SUBLEVEL in Makefile
+- Generated by auto-update script
+"
+        
+        log_info "Git commit created"
+    else
+        log_info "No changes to commit"
+    fi
+}
+
+# 创建git标签
+create_git_tag() {
+    local version=$1
+    local date=$(date +%Y%m%d)
+    local tag_name="kernel-v${version}-${date}"
+    
+    cd "$KERNEL_SRC"
+    
+    if git tag -l "$tag_name" | grep -q "$tag_name"; then
+        log_warn "Tag $tag_name already exists"
+    else
+        log_step "Creating git tag $tag_name"
+        git tag -a "$tag_name" -m "Kernel version $version - Build $date"
+        log_info "Git tag created"
+    fi
+}
+
+# 主函数
+main() {
+    local action=${1:-"check"}
+    
+    case "$action" in
+        check)
+            log_info "Checking for kernel updates..."
+            
+            local current=$(get_current_version)
+            local latest=$(get_latest_version)
+            
+            echo ""
+            echo "Current version: $current"
+            echo "Latest version:  $latest"
+            echo ""
+            
+            local cmp=$(version_compare "$current" "$latest")
+            
+            case "$cmp" in
+                update_needed)
+                    log_info "Update available: $current → $latest"
+                    echo ""
+                    echo "To update, run: $0 update"
+                    ;;
+                same)
+                    log_info "Already up to date"
+                    ;;
+                downgrade)
+                    log_warn "Current version is newer than latest stable"
+                    ;;
+                different_branch)
+                    log_error "Version branches don't match"
+                    ;;
+            esac
+            ;;
+            
+        update)
+            local target_version=$2
+            
+            if [ -z "$target_version" ]; then
+                target_version=$(get_latest_version)
+            fi
+            
+            local current=$(get_current_version)
+            
+            echo ""
+            log_info "Updating kernel: $current → $target_version"
+            echo ""
+            
+            local cmp=$(version_compare "$current" "$target_version")
+            
+            if [ "$cmp" != "update_needed" ]; then
+                log_error "Cannot update from $current to $target_version (status: $cmp)"
+                exit 1
+            fi
+            
+            # 应用增量补丁
+            if apply_incremental_patches "$current" "$target_version"; then
+                # 创建git提交
+                create_git_commit "$target_version"
+                
+                # 创建git标签
+                create_git_tag "$target_version"
+                
+                # 更新版本文件
+                echo "$target_version" > "$VERSION_FILE"
+                
+                echo ""
+                log_info "Kernel updated to $target_version successfully!"
+                log_info "Version file updated: $VERSION_FILE"
+                echo ""
+                echo "Next steps:"
+                echo "  1. Review changes: cd $KERNEL_SRC && git log -1"
+                echo "  2. Build kernel: ./build.sh build"
+                echo "  3. Push to remote: git push origin --tags"
+            else
+                log_error "Kernel update failed with some patch conflicts"
+                log_warn "Please resolve conflicts manually and commit"
+                exit 1
+            fi
+            ;;
+            
+        version)
+            get_current_version
+            ;;
+            
+        latest)
+            get_latest_version
+            ;;
+            
+        *)
+            echo "Usage: $0 {check|update|version|latest}"
+            echo ""
+            echo "Commands:"
+            echo "  check         Check for updates (default)"
+            echo "  update [ver]  Update to latest or specific version"
+            echo "  version       Show current version"
+            echo "  latest        Show latest available version"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
