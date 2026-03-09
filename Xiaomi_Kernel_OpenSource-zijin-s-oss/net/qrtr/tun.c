@@ -31,6 +31,7 @@ static int qrtr_tun_send(struct qrtr_endpoint *ep, struct sk_buff *skb)
 static int qrtr_tun_open(struct inode *inode, struct file *filp)
 {
 	struct qrtr_tun *tun;
+	int ret;
 
 	tun = kzalloc(sizeof(*tun), GFP_KERNEL);
 	if (!tun)
@@ -79,6 +80,12 @@ static ssize_t qrtr_tun_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	size_t len = iov_iter_count(from);
 	ssize_t ret;
 	void *kbuf;
+
+	if (!len)
+		return -EINVAL;
+
+	if (len > KMALLOC_MAX_SIZE)
+		return -ENOMEM;
 
 	kbuf = kzalloc(len, GFP_KERNEL);
 	if (!kbuf)

@@ -143,10 +143,6 @@ static void rq_end_stats(struct mapped_device *md, struct request *orig)
  */
 static void rq_completed(struct mapped_device *md)
 {
-	/* nudge anyone waiting on suspend queue */
-	if (unlikely(wq_has_sleeper(&md->wait)))
-		wake_up(&md->wait);
-
 	/*
 	 * dm_put() must be at the end of this function. See the comment above
 	 */
@@ -572,6 +568,7 @@ out_tag_set:
 	blk_mq_free_tag_set(md->tag_set);
 out_kfree_tag_set:
 	kfree(md->tag_set);
+	md->tag_set = NULL;
 
 	return err;
 }
@@ -581,6 +578,7 @@ void dm_mq_cleanup_mapped_device(struct mapped_device *md)
 	if (md->tag_set) {
 		blk_mq_free_tag_set(md->tag_set);
 		kfree(md->tag_set);
+		md->tag_set = NULL;
 	}
 }
 

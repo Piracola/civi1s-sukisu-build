@@ -361,14 +361,19 @@ static int tcf_ct_act_nat(struct sk_buff *skb,
 	}
 
 	err = ct_nat_execute(skb, ct, ctinfo, range, maniptype);
-	if (err == NF_ACCEPT &&
-	    ct->status & IPS_SRC_NAT && ct->status & IPS_DST_NAT) {
-		if (maniptype == NF_NAT_MANIP_SRC)
-			maniptype = NF_NAT_MANIP_DST;
-		else
-			maniptype = NF_NAT_MANIP_SRC;
+	if (err == NF_ACCEPT && ct->status & IPS_DST_NAT) {
+		if (ct->status & IPS_SRC_NAT) {
+			if (maniptype == NF_NAT_MANIP_SRC)
+				maniptype = NF_NAT_MANIP_DST;
+			else
+				maniptype = NF_NAT_MANIP_SRC;
 
-		err = ct_nat_execute(skb, ct, ctinfo, range, maniptype);
+			err = ct_nat_execute(skb, ct, ctinfo, range,
+					     maniptype);
+		} else if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
+			err = ct_nat_execute(skb, ct, ctinfo, NULL,
+					     NF_NAT_MANIP_SRC);
+		}
 	}
 	return err;
 #else
@@ -469,18 +474,19 @@ static int tcf_ct_act(struct sk_buff *skb, const struct tc_action *a,
 		/* This will take care of sending queued events
 		 * even if the connection is already confirmed.
 		 */
-		nf_conntrack_confirm(skb);
+		if (nf_conntrack_confirm(skb) != NF_ACCEPT)
+			goto drop;
 	}
 
 out_push:
 	skb_push_rcsum(skb, nh_ofs);
 
 out:
-	bstats_cpu_update(this_cpu_ptr(a->cpu_bstats), skb);
+	tcf_action_update_bstats(&c->common, skb);
 	return retval;
 
 drop:
-	qstats_drop_inc(this_cpu_ptr(a->cpu_qstats));
+	tcf_action_inc_drop_qstats(&c->common);
 	return TC_ACT_SHOT;
 }
 
@@ -647,9 +653,6 @@ static int tcf_ct_fill_params(struct net *net,
 				   NULL, TCA_CT_UNSPEC,
 				   sizeof(p->zone));
 	}
-
-	if (p->zone == NF_CT_DEFAULT_ZONE_ID)
-		return 0;
 
 	nf_ct_zone_init(&zone, p->zone, NF_CT_DEFAULT_ZONE_DIR, 0);
 	tmpl = nf_ct_tmpl_alloc(net, &zone, GFP_KERNEL);
@@ -914,11 +917,7 @@ static void tcf_stats_update(struct tc_action *a, u64 bytes, u32 packets,
 {
 	struct tcf_ct *c = to_ct(a);
 
-	_bstats_cpu_update(this_cpu_ptr(a->cpu_bstats), bytes, packets);
-
-	if (hw)
-		_bstats_cpu_update(this_cpu_ptr(a->cpu_bstats_hw),
-				   bytes, packets);
+	tcf_action_update_stats(a, bytes, packets, false, hw);
 	c->tcf_tm.lastuse = max_t(u64, c->tcf_tm.lastuse, lastuse);
 }
 

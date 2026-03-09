@@ -89,8 +89,7 @@ EXPORT_SYMBOL(kmem_cache_size);
 #ifdef CONFIG_DEBUG_VM
 static int kmem_cache_sanity_check(const char *name, unsigned int size)
 {
-	if (!name || in_interrupt() || size < sizeof(void *) ||
-		size > KMALLOC_MAX_SIZE) {
+	if (!name || in_interrupt() || size > KMALLOC_MAX_SIZE) {
 		pr_err("kmem_cache_create(%s) integrity check failed\n", name);
 		return -EINVAL;
 	}
@@ -329,14 +328,6 @@ int slab_unmergeable(struct kmem_cache *s)
 	 */
 	if (s->refcount < 0)
 		return 1;
-
-#ifdef CONFIG_MEMCG_KMEM
-	/*
-	 * Skip the dying kmem_cache.
-	 */
-	if (s->memcg_params.dying)
-		return 1;
-#endif
 
 	return 0;
 }
@@ -978,6 +969,16 @@ void kmem_cache_destroy(struct kmem_cache *s)
 	get_online_mems();
 
 	mutex_lock(&slab_mutex);
+
+	/*
+	 * Another thread referenced it again
+	 */
+	if (READ_ONCE(s->refcount)) {
+		spin_lock_irq(&memcg_kmem_wq_lock);
+		s->memcg_params.dying = false;
+		spin_unlock_irq(&memcg_kmem_wq_lock);
+		goto out_unlock;
+	}
 #endif
 
 	err = shutdown_memcg_caches(s);
@@ -1739,6 +1740,13 @@ static __always_inline void *__do_krealloc(const void *p, size_t new_size,
 		ks = ksize(p);
 
 	if (ks >= new_size) {
+		/* Zero out spare memory. */
+		if (want_init_on_alloc(flags)) {
+			kasan_disable_current();
+			memset(kasan_reset_tag(p) + new_size, 0, ks - new_size);
+			kasan_enable_current();
+		}
+
 		p = kasan_krealloc((void *)p, new_size, flags);
 		return (void *)p;
 	}

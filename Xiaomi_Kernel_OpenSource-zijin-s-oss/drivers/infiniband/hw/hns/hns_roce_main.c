@@ -198,7 +198,7 @@ static int hns_roce_query_device(struct ib_device *ib_dev,
 				  IB_DEVICE_RC_RNR_NAK_GEN;
 	props->max_send_sge = hr_dev->caps.max_sq_sg;
 	props->max_recv_sge = hr_dev->caps.max_rq_sg;
-	props->max_sge_rd = 1;
+	props->max_sge_rd = hr_dev->caps.max_sq_sg;
 	props->max_cq = hr_dev->caps.num_cqs;
 	props->max_cqe = hr_dev->caps.max_cqes;
 	props->max_mr = hr_dev->caps.num_mtpts;
@@ -279,6 +279,9 @@ static enum rdma_link_layer hns_roce_get_link_layer(struct ib_device *device,
 static int hns_roce_query_pkey(struct ib_device *ib_dev, u8 port, u16 index,
 			       u16 *pkey)
 {
+	if (index > 0)
+		return -EINVAL;
+
 	*pkey = PKEY_ID;
 
 	return 0;
@@ -359,7 +362,7 @@ static int hns_roce_mmap(struct ib_ucontext *context,
 		return rdma_user_mmap_io(context, vma,
 					 to_hr_ucontext(context)->uar.pfn,
 					 PAGE_SIZE,
-					 pgprot_noncached(vma->vm_page_prot));
+					 pgprot_device(vma->vm_page_prot));
 
 	/* vm_pgoff: 1 -- TPTR */
 	case 1:
@@ -848,8 +851,7 @@ static int hns_roce_setup_hca(struct hns_roce_dev *hr_dev)
 	return 0;
 
 err_qp_table_free:
-	if (hr_dev->caps.flags & HNS_ROCE_CAP_FLAG_SRQ)
-		hns_roce_cleanup_qp_table(hr_dev);
+	hns_roce_cleanup_qp_table(hr_dev);
 
 err_cq_table_free:
 	hns_roce_cleanup_cq_table(hr_dev);

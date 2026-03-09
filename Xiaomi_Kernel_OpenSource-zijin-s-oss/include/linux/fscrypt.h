@@ -233,6 +233,9 @@ int __fscrypt_encrypt_symlink(struct inode *inode, const char *target,
 const char *fscrypt_get_symlink(struct inode *inode, const void *caddr,
 				unsigned int max_size,
 				struct delayed_call *done);
+
+bool fscrypt_is_nokey_name(const struct dentry *dentry);
+
 static inline void fscrypt_set_ops(struct super_block *sb,
 				   const struct fscrypt_operations *s_cop)
 {
@@ -258,6 +261,11 @@ fscrypt_get_dummy_context(struct super_block *sb)
 
 static inline void fscrypt_handle_d_move(struct dentry *dentry)
 {
+}
+
+static inline bool fscrypt_is_nokey_name(const struct dentry *dentry)
+{
+	return false;
 }
 
 /* crypto.c */
@@ -537,6 +545,12 @@ static inline const char *fscrypt_get_symlink(struct inode *inode,
 					      struct delayed_call *done)
 {
 	return ERR_PTR(-EOPNOTSUPP);
+}
+
+static inline int fscrypt_symlink_getattr(const struct path *path,
+					  struct kstat *stat)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline void fscrypt_set_ops(struct super_block *sb,

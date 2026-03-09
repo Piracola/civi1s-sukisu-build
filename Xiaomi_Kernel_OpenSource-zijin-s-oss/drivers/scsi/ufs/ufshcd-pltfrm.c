@@ -141,7 +141,7 @@ static int ufshcd_populate_vreg(struct device *dev, const char *name,
 	}
 
 	snprintf(prop_name, MAX_PROP_SIZE, "%s-supply", name);
-	if (!of_parse_phandle(np, prop_name, 0)) {
+	if (!phandle_exists(np, prop_name, 0)) {
 		dev_info(dev, "%s: Unable to find %s regulator, assuming enabled\n",
 				__func__, prop_name);
 		goto out;
@@ -466,8 +466,6 @@ int ufshcd_pltfrm_init(struct platform_device *pdev,
 		dev_err(dev, "Initialization failed\n");
 		goto dealloc_host;
 	}
-
-	platform_set_drvdata(pdev, hba);
 
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);

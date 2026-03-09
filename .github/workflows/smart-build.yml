@@ -1,0 +1,379 @@
+name: Smart Kernel Build
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target kernel version (e.g., 5.4.301, leave empty for latest)'
+        required: false
+        default: ''
+      force_build:
+        description: 'Force build even if no updates'
+        required: false
+        default: 'false'
+        type: boolean
+  schedule:
+    - cron: '0 2 * * 1'
+
+env:
+  KERNEL_BRANCH: '5.4'
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      needs_update: ${{ steps.check.outputs.needs_update }}
+      current_version: ${{ steps.check.outputs.current_version }}
+      target_version: ${{ steps.check.outputs.target_version }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Check kernel updates
+        id: check
+        run: |
+          chmod +x ./scripts/smart-update.sh
+          
+          CURRENT=$(./scripts/smart-update.sh version)
+          LATEST=$(./scripts/smart-update.sh latest)
+          TARGET="${{ github.event.inputs.target_version }}"
+          
+          [ -z "$TARGET" ] && TARGET="$LATEST"
+          
+          echo "current_version=$CURRENT" >> $GITHUB_OUTPUT
+          echo "target_version=$TARGET" >> $GITHUB_OUTPUT
+          
+          echo "::notice::Current: $CURRENT, Target: $TARGET"
+          
+          if [ "$CURRENT" != "$TARGET" ] || [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create update issue
+        if: steps.check.outputs.needs_update == 'true' && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const current = '${{ steps.check.outputs.current_version }}';
+            const target = '${{ steps.check.outputs.target_version }}';
+            
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'kernel-update'
+            });
+            
+            const exists = issues.data.some(i => 
+              i.title.includes(`Update Available: ${current} → ${target}`)
+            );
+            
+            if (!exists) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🔄 Kernel Update Available: ${current} → ${target}`,
+                body: `## Kernel Update Available
+                
+**Current Version:** \`${current}\`
+**Target Version:** \`${target}\`
+
+### Automated Update
+
+This update was detected by the scheduled check.
+
+### Manual Steps
+
+1. Review the changes
+2. Trigger the build workflow with \`force_build=true\`
+3. Test the resulting kernel
+
+---
+*This issue was automatically created.*
+`,
+                labels: ['kernel-update', 'automated']
+              });
+            }
+
+  build:
+    needs: check-updates
+    if: needs.check-updates.outputs.needs_update == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android/sdk
+          sudo rm -rf /opt/ghc
+          sudo apt-get clean
+          df -h
+      
+      - name: Set up swap
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 12
+      
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        id: cache-toolchain
+        with:
+          path: ~/toolchains/clang
+          key: ${{ runner.os }}-clang-r416183b-v2
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git gnupg gperf \
+            liblz4-tool libncurses-dev libssl-dev \
+            libxml2-utils lzop rsync squashfs-tools \
+            xsltproc zip zlib1g-dev python3 \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            cpio xz-utils
+      
+      - name: Download toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/toolchains
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b \
+            ~/toolchains/clang
+      
+      - name: Smart kernel update
+        id: update
+        run: |
+          chmod +x ./scripts/smart-update.sh
+          
+          TARGET="${{ needs.check-updates.outputs.target_version }}"
+          CURRENT="${{ needs.check-updates.outputs.current_version }}"
+          
+          if [ -d "Xiaomi_Kernel_OpenSource-zijin-s-oss" ]; then
+            echo "Using existing kernel source"
+            cd Xiaomi_Kernel_OpenSource-zijin-s-oss
+            
+            if [ "$CURRENT" != "$TARGET" ]; then
+              echo "Updating kernel: $CURRENT → $TARGET"
+              cd ..
+              ./scripts/smart-update.sh update "$TARGET" || {
+                echo "::warning::Update encountered conflicts, continuing with build..."
+              }
+            fi
+          else
+            echo "Cloning kernel source..."
+            git clone --depth=1 \
+              -b zijin-s-oss \
+              https://github.com/MiCode/Xiaomi_Kernel_OpenSource \
+              Xiaomi_Kernel_OpenSource-zijin-s-oss
+            
+            cd Xiaomi_Kernel_OpenSource-zijin-s-oss
+            git checkout -b local-build
+            
+            if [ "$CURRENT" != "$TARGET" ]; then
+              cd ..
+              ./scripts/smart-update.sh update "$TARGET"
+            fi
+          fi
+          
+          KERNEL_VERSION=$(cd Xiaomi_Kernel_OpenSource-zijin-s-oss && make kernelversion 2>/dev/null || echo "$TARGET")
+          echo "kernel_version=$KERNEL_VERSION" >> $GITHUB_OUTPUT
+          echo "::notice::Kernel version: $KERNEL_VERSION"
+      
+      - name: Integrate KernelSU
+        run: |
+          cd Xiaomi_Kernel_OpenSource-zijin-s-oss
+          
+          for i in {1..3}; do
+            if curl -LSs --connect-timeout 30 --max-time 300 \
+              "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | \
+              bash -s susfs-v1.5.5; then
+              echo "KernelSU integrated successfully"
+              break
+            else
+              echo "Attempt $i failed, retrying..."
+              sleep 5
+            fi
+          done
+      
+      - name: Apply compatibility patches
+        run: |
+          cd Xiaomi_Kernel_OpenSource-zijin-s-oss
+          
+          if [ -f "$GITHUB_WORKSPACE/patches/apply-kernelsu-compat.sh" ]; then
+            bash "$GITHUB_WORKSPACE/patches/apply-kernelsu-compat.sh" || {
+              echo "::warning::Some patches failed, continuing..."
+            }
+          fi
+      
+      - name: Configure kernel
+        run: |
+          cd Xiaomi_Kernel_OpenSource-zijin-s-oss
+          
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          cp "$DEFCONFIG" "$DEFCONFIG.backup"
+          
+          cat >> "$DEFCONFIG" << 'EOF'
+          CONFIG_KSU=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_OVERLAY_FS=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_KSU_VERSION_H=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          EOF
+          
+          echo "Config changes:"
+          diff -u "$DEFCONFIG.backup" "$DEFCONFIG" || true
+      
+      - name: Build kernel
+        id: compile
+        run: |
+          cd Xiaomi_Kernel_OpenSource-zijin-s-oss
+          
+          export PATH=~/toolchains/clang/bin:$PATH
+          export KBUILD_BUILD_HOST=GitHub-Actions
+          export KBUILD_BUILD_USER=Auto-Build
+          export ARCH=arm64
+          export SUBARCH=arm64
+          
+          make mrproper
+          
+          make -j$(nproc --all) \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            gki_defconfig
+          
+          if make -j$(nproc --all) \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            2>&1 | tee build.log; then
+            echo "compile_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "compile_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+      
+      - name: Verify build
+        if: steps.compile.outputs.compile_success == 'true'
+        run: |
+          IMAGE="Xiaomi_Kernel_OpenSource-zijin-s-oss/out/arch/arm64/boot/Image"
+          
+          if [ ! -f "$IMAGE" ]; then
+            echo "::error::Kernel Image not found!"
+            exit 1
+          fi
+          
+          ls -lh "$IMAGE"
+          file "$IMAGE"
+      
+      - name: Package kernel
+        if: steps.compile.outputs.compile_success == 'true'
+        run: |
+          VERSION="${{ steps.update.outputs.kernel_version }}"
+          DATE=$(date +%Y%m%d)
+          OUTPUT_NAME="SukiSU-Kernel-Civi1s-v${VERSION}-${DATE}"
+          
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+          rm -rf AnyKernel3/.git*
+          
+          cp Xiaomi_Kernel_OpenSource-zijin-s-oss/out/arch/arm64/boot/Image AnyKernel3/
+          
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
+          sed -i 's/is_slot_device=0;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+          sed -i 's/device.name1=.*/device.name1=civi1s/g' AnyKernel3/anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=civi_1s/g' AnyKernel3/anykernel.sh
+          sed -i 's/device.name3=.*/device.name3=civi/g' AnyKernel3/anykernel.sh
+          
+          cd AnyKernel3
+          zip -r9 "$GITHUB_WORKSPACE/${OUTPUT_NAME}.zip" .
+          
+          echo "output_name=$OUTPUT_NAME" >> $GITHUB_ENV
+          echo "output_file=${OUTPUT_NAME}.zip" >> $GITHUB_ENV
+      
+      - name: Upload artifact
+        if: steps.compile.outputs.compile_success == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.output_name }}
+          path: ${{ env.output_file }}
+          retention-days: 30
+      
+      - name: Create release
+        if: steps.compile.outputs.compile_success == 'true' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.update.outputs.kernel_version }}-${{ github.run_number }}
+          name: SukiSU Kernel ${{ steps.update.outputs.kernel_version }}
+          body: |
+            ## SukiSU Kernel for Xiaomi Civi 1s
+            
+            **Kernel Version:** ${{ steps.update.outputs.kernel_version }}
+            **Build Date:** ${{ github.event.head_commit.timestamp }}
+            **Build Number:** ${{ github.run_number }}
+            
+            ### Changes
+            - Updated kernel to ${{ steps.update.outputs.kernel_version }}
+            - Integrated KernelSU with SUSFS
+            - Applied compatibility patches
+            
+            ### Installation
+            Flash via TWRP or Magisk
+            
+            ---
+            *Built automatically by GitHub Actions*
+          files: ${{ env.output_file }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Update version file
+        if: steps.compile.outputs.compile_success == 'true' && github.event_name != 'pull_request'
+        run: |
+          VERSION="${{ steps.update.outputs.kernel_version }}"
+          echo "$VERSION" > KERNEL_VERSION
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add KERNEL_VERSION
+          git commit -m "chore: update KERNEL_VERSION to $VERSION" || true
+          git push origin HEAD:main || true
+      
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.run_number }}
+          path: |
+            Xiaomi_Kernel_OpenSource-zijin-s-oss/build.log
+            Xiaomi_Kernel_OpenSource-zijin-s-oss/out/.config
+          retention-days: 7

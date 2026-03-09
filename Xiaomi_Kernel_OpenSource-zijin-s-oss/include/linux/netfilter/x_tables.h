@@ -227,7 +227,7 @@ struct xt_table {
 	unsigned int valid_hooks;
 
 	/* Man behind the curtain... */
-	struct xt_table_info __rcu *private;
+	struct xt_table_info *private;
 
 	/* Set this to THIS_MODULE if you are a module, otherwise NULL */
 	struct module *me;
@@ -264,7 +264,7 @@ struct xt_table_info {
 	unsigned int stacksize;
 	void ***jumpstack;
 
-	unsigned char entries[0] __aligned(8);
+	unsigned char entries[] __aligned(8);
 };
 
 int xt_register_target(struct xt_target *target);
@@ -376,7 +376,7 @@ static inline unsigned int xt_write_recseq_begin(void)
 	 * since addend is most likely 1
 	 */
 	__this_cpu_add(xt_recseq.sequence, addend);
-	smp_wmb();
+	smp_mb();
 
 	return addend;
 }
@@ -448,9 +448,6 @@ xt_get_per_cpu_counter(struct xt_counters *cnt, unsigned int cpu)
 
 struct nf_hook_ops *xt_hook_ops_alloc(const struct xt_table *, nf_hookfn *);
 
-struct xt_table_info
-*xt_table_get_private_protected(const struct xt_table *table);
-
 #ifdef CONFIG_COMPAT
 #include <net/compat.h>
 
@@ -467,7 +464,7 @@ struct compat_xt_entry_match {
 		} kernel;
 		u_int16_t match_size;
 	} u;
-	unsigned char data[0];
+	unsigned char data[];
 };
 
 struct compat_xt_entry_target {
@@ -483,7 +480,7 @@ struct compat_xt_entry_target {
 		} kernel;
 		u_int16_t target_size;
 	} u;
-	unsigned char data[0];
+	unsigned char data[];
 };
 
 /* FIXME: this works only on 32 bit tasks
@@ -497,7 +494,7 @@ struct compat_xt_counters {
 struct compat_xt_counters_info {
 	char name[XT_TABLE_MAXNAMELEN];
 	compat_uint_t num_counters;
-	struct compat_xt_counters counters[0];
+	struct compat_xt_counters counters[];
 };
 
 struct _compat_xt_align {
